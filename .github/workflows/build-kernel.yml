@@ -1,0 +1,89 @@
+name: Build Raspberry Pi Kernel
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  build:
+    name: Build Kernel for ARM64
+    runs-on: ubuntu-latest
+
+    env:
+      ARCH: arm64
+      CROSS_COMPILE: aarch64-linux-gnu-
+      KERNEL: kernel8
+
+    steps:
+      - name: Checkout user repository
+        uses: actions/checkout@v4
+        with:
+          path: user-repo
+
+      - name: Checkout Raspberry Pi Kernel
+        uses: actions/checkout@v4
+        with:
+          repository: raspberrypi/linux
+          ref: rpi-6.12.y
+          path: linux
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev make libc6-dev libncurses5-dev \
+          crossbuild-essential-arm64 kmod device-tree-compiler
+
+      - name: Apply Custom Driver Patch
+        working-directory: ./linux
+        run: |
+          # Applies the patch located in your repo to the kernel tree
+          patch -p1 < ../robertzaage/cxsmtspk-driver/patch/rpi-cxsmartspk-driver.patch
+
+      - name: Configure Kernel
+        working-directory: ./linux
+        run: |
+          # Use bcm2711_defconfig for Pi 4 / CM4. 
+          # Note: If targeting CM5 specifically, you may need bcm2712_defconfig
+          make bcm2711_defconfig
+
+          # Enable your custom driver in the .config
+          scripts/config --module CONFIG_SND_BCM2708_SOC_CXSMTSPK_I2S
+          scripts/config --module CONFIG_SND_SOC_CX2092X_I2C
+          scripts/config --module CONFIG_SND_SOC_CX2092X_SPI
+          make olddefconfig
+
+      - name: Build Kernel, Modules, and DTBs
+        working-directory: ./linux
+        run: |
+          make -j$(nproc) Image modules dtbs
+
+      - name: Package Artifacts
+        working-directory: ./linux
+        run: |
+          mkdir -p ../out/boot/overlays ../out/lib/modules
+
+          # Install modules
+          make INSTALL_MOD_PATH=../out modules_install
+
+          # Copy Kernel Image
+          cp arch/arm64/boot/Image ../out/boot/${{ env.KERNEL }}.img
+
+          # Copy Device Trees
+          cp arch/arm64/boot/dts/broadcom/*.dtb ../out/boot/
+          cp arch/arm64/boot/dts/overlays/*.dtb* ../out/boot/overlays/
+          cp arch/arm64/boot/dts/overlays/README ../out/boot/overlays/
+
+          # Create deployment tarball
+          cd ../out
+          tar -czvf ../kernel-release.tar.gz .
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpi-kernel-6.12
+          path: kernel-release.tar.gz
+          retention-days: 7

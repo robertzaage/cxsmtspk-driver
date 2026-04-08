@@ -1,0 +1,896 @@
+diff --git a/Documentation/devicetree/bindings/sound/cnxt,cx2092x.txt b/Documentation/devicetree/bindings/sound/cnxt,cx2092x.txt
+new file mode 100644
+index 000000000..72928bd5c
+--- /dev/null
++++ b/Documentation/devicetree/bindings/sound/cnxt,cx2092x.txt
+@@ -0,0 +1,29 @@
++Conexant CX20921/CX209724 Voice Processor DSP
++
++The devices supports both the I2C and SPI bus.
++
++Required properties:
++
++  - compatible: One of "cnxt,cx20921", "cnxt,cx20924".
++  - reg: The I2C address of the device for I2C, it should be <0x41>
++
++Optional properties:
++
++  - reset-gpios: A GPIO spec to define which pin is connected to the chip's
++                !RESET pin. If specified, the driver will assert a hardware
++                reset at probe time.
++
++CODEC input pins:
++  "MIC"        - Microphone input
++
++Example:
++
++codec_i2c: cx20921@41 {
++       compatible = "cnxt,cx20921";
++       reg = <0x41>;
++       reset-gpios = <&gpio1 23 0>;
++};
++
++codec_spi: cx20924@0 {
++       compatible = "cnxt,cx20924";
++};
+diff --git a/arch/arm/boot/dts/overlays/Makefile b/arch/arm/boot/dts/overlays/Makefile
+index 272717f6d..c8d17ada1 100644
+--- a/arch/arm/boot/dts/overlays/Makefile
++++ b/arch/arm/boot/dts/overlays/Makefile
+@@ -44,6 +44,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
+        cma.dtbo \
+        crystalfontz-cfa050_pi_m.dtbo \
+        cutiepi-panel.dtbo \
++       rpi-cxsmartspk-i2s.dtbo \
+        dacberry400.dtbo \
+        dht11.dtbo \
+        dionaudio-kiwi.dtbo \
+diff --git a/arch/arm/boot/dts/overlays/rpi-cxsmartspk-i2s-overlay.dts b/arch/arm/boot/dts/overlays/rpi-cxsmartspk-i2s-overlay.dts
+new file mode 100644
+index 000000000..d9e4bf864
+--- /dev/null
++++ b/arch/arm/boot/dts/overlays/rpi-cxsmartspk-i2s-overlay.dts
+@@ -0,0 +1,60 @@
++/dts-v1/;
++/plugin/;
++
++/ {
++       compatible = "brcm,bcm2835";
++
++       fragment@0 {
++               target = <&i2s>;
++               __overlay__ {
++                       status = "okay";
++               };
++       };
++
++       fragment@1 {
++               target-path = "/";
++               __overlay__ {
++                       sound: cxsmtspk_sound {
++                               compatible = "cnxt,cx2092x-pi-i2s";
++                               model = "CXSMTSPK_Pi";
++                               status = "okay";
++
++                               i2s-controller = <&i2s>;
++                               mic-codec      = <&cx2092x>;
++                               dac-codec      = <&pcm512x>;
++                       };
++               };
++       };
++
++       fragment@2 {
++               target = <&i2c1>;         /* adjust if not using I2C1 */
++               __overlay__ {
++                       #address-cells = <1>;
++                       #size-cells = <0>;
++
++                       cx2092x: codec@41 {
++                               compatible = "cnxt,cx20921";
++                               reg = <0x41>;
++                               status = "okay";
++                       };
++
++                       pcm512x: codec@4c {
++                               compatible = "ti,pcm5122";
++                               reg = <0x4c>;
++                               status = "okay";
++                               /* Optional supplies / reset if wired:
++                                  avdd-supply = <&vdd_3v3>;
++                                  dvdd-supply = <&vdd_3v3>;
++                                  cpvdd-supply = <&vdd_3v3>;
++                                  reset-gpios = <&gpio 5 GPIO_ACTIVE_LOW>;
++                               */
++                       };
++               };
++       };
++
++       __overrides__ {
++               i2c_bus  = <&i2c1>;
++               mic_addr = <&cx2092x>,"reg:0";
++               dac_addr = <&pcm512x>,"reg:0";
++       };
++};
+diff --git a/sound/soc/bcm/Kconfig b/sound/soc/bcm/Kconfig
+index fa50cab51..e5fa395d9 100644
+--- a/sound/soc/bcm/Kconfig
++++ b/sound/soc/bcm/Kconfig
+@@ -282,6 +282,13 @@ config SND_BCM2708_SOC_ALLO_KATANA_DAC
+        help
+          Say Y or M if you want to add support for Allo Katana DAC.
+ 
++config SND_BCM2708_SOC_CXSMTSPK_I2S
++       tristate "Support for CX2092x Mic-Array (I2S)"
++       depends on SND_BCM2708_SOC_I2S || SND_BCM2835_SOC_I2S
++       select SND_SOC_CX2092X_I2C
++       help
++         Say Y or M if you want to add support for Conexant CX2092x Mic-Array
++
+ config SND_BCM2708_SOC_FE_PI_AUDIO
+        tristate "Support for Fe-Pi-Audio"
+        select SND_SOC_SGTL5000
+diff --git a/sound/soc/bcm/Makefile b/sound/soc/bcm/Makefile
+index 693161c6a..2634deb06 100644
+--- a/sound/soc/bcm/Makefile
++++ b/sound/soc/bcm/Makefile
+@@ -43,6 +43,7 @@ snd-soc-allo-boss2-dac-objs := allo-boss2-dac.o
+ snd-soc-allo-piano-dac-objs := allo-piano-dac.o
+ snd-soc-allo-piano-dac-plus-objs := allo-piano-dac-plus.o
+ snd-soc-allo-katana-codec-objs := allo-katana-codec.o
++snd-soc-cxsmtspk-pi-i2s-objs := cxsmtspk-pi-i2s.o
+ snd-soc-pisound-objs := pisound.o
+ snd-soc-fe-pi-audio-objs := fe-pi-audio.o
+ snd-soc-rpi-simple-soundcard-objs := rpi-simple-soundcard.o
+@@ -77,6 +78,7 @@ obj-$(CONFIG_SND_BCM2708_SOC_ALLO_BOSS2_DAC) += snd-soc-allo-boss2-dac.o
+ obj-$(CONFIG_SND_BCM2708_SOC_ALLO_PIANO_DAC) += snd-soc-allo-piano-dac.o
+ obj-$(CONFIG_SND_BCM2708_SOC_ALLO_PIANO_DAC_PLUS) += snd-soc-allo-piano-dac-plus.o
+ obj-$(CONFIG_SND_BCM2708_SOC_ALLO_KATANA_DAC) += snd-soc-allo-katana-codec.o
++obj-$(CONFIG_SND_BCM2708_SOC_CXSMTSPK_I2S) += snd-soc-cxsmtspk-pi-i2s.o
+ obj-$(CONFIG_SND_PISOUND) += snd-soc-pisound.o
+ obj-$(CONFIG_SND_BCM2708_SOC_FE_PI_AUDIO) += snd-soc-fe-pi-audio.o
+ obj-$(CONFIG_SND_RPI_SIMPLE_SOUNDCARD) += snd-soc-rpi-simple-soundcard.o
+diff --git a/sound/soc/bcm/cxsmtspk-pi-i2s.c b/sound/soc/bcm/cxsmtspk-pi-i2s.c
+new file mode 100644
+index 000000000..4c1df276a
+--- /dev/null
++++ b/sound/soc/bcm/cxsmtspk-pi-i2s.c
+@@ -0,0 +1,151 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * CX2092x mic array + PCM512x DAC ASoC machine driver for Raspberry Pi
++ *
++ * Capture:  CX2092x  (I2C @0x41)
++ * Playback: PCM512x  (I2C @0x4c)
++ *
++ * RPi (fe203000.i2s) is I2S master, codecs are slaves.
++ */
++
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_device.h>
++#include <linux/platform_device.h>
++#include <sound/soc.h>
++#include <sound/pcm_params.h>
++
++static struct snd_soc_dai_link links[2];
++static struct snd_soc_card     cxs_card;
++
++/* shared CPU/Platform comps */
++static struct snd_soc_dai_link_component cpu_comp;
++static struct snd_soc_dai_link_component plat_comp;
++
++/* codec comps */
++static struct snd_soc_dai_link_component mic_codec_comp;
++static struct snd_soc_dai_link_component dac_codec_comp;
++
++static int cxs_hw_params(struct snd_pcm_substream *substream,
++                        struct snd_pcm_hw_params *params)
++{
++       struct snd_soc_pcm_runtime *rtd = substream->private_data;
++       struct snd_soc_dai *cpu_dai   = snd_soc_rtd_to_cpu(rtd, 0);
++       struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
++       unsigned int ch = params_channels(params);
++       /* Pi usually drives 32 bits per slot regardless of sample width */
++       unsigned int slot_width = 32;
++       int ret;
++
++       /* Codec is clock slave */
++       ret = snd_soc_dai_set_sysclk(codec_dai, 0, 0, SND_SOC_CLOCK_IN);
++       if (ret && ret != -ENOIOCTLCMD && ret != -ENOTSUPP)
++               return ret;
++
++       ret = snd_soc_dai_set_bclk_ratio(cpu_dai, slot_width * ch);
++       if (ret && ret != -ENOIOCTLCMD && ret != -ENOTSUPP)
++               return ret;
++
++       return 0;
++}
++
++static const struct snd_soc_ops cxs_ops = {
++       .hw_params = cxs_hw_params,
++};
++
++static int cxsmtspk_probe(struct platform_device *pdev)
++{
++       struct device *dev = &pdev->dev;
++       struct device_node *np = dev->of_node;
++       struct device_node *cpu_np, *mic_np, *dac_np;
++       int ret;
++
++       if (!np)
++               return dev_err_probe(dev, -EINVAL, "no DT node\n");
++
++       cpu_np = of_parse_phandle(np, "i2s-controller", 0);
++       mic_np = of_parse_phandle(np, "mic-codec", 0);
++       dac_np = of_parse_phandle(np, "dac-codec", 0);
++       if (!cpu_np || !mic_np || !dac_np)
++               return dev_err_probe(dev, -EINVAL,
++                                    "missing i2s-controller/mic-codec/dac-codec phandle\n");
++
++       memset(&cpu_comp,        0, sizeof(cpu_comp));
++       memset(&plat_comp,       0, sizeof(plat_comp));
++       memset(&mic_codec_comp,  0, sizeof(mic_codec_comp));
++       memset(&dac_codec_comp,  0, sizeof(dac_codec_comp));
++
++       cpu_comp.of_node   = cpu_np;
++       plat_comp.of_node  = cpu_np;
++
++       mic_codec_comp.of_node  = mic_np;
++       mic_codec_comp.dai_name = "cx2092x-aif";
++
++       dac_codec_comp.of_node  = dac_np;
++       dac_codec_comp.dai_name = "pcm512x-hifi";
++
++       /* -------- Link 0: Mic capture -------- */
++       memset(&links[0], 0, sizeof(links[0]));
++       links[0].name            = "Mic-Capture";
++       links[0].stream_name     = "Mic Capture";
++       links[0].cpus            = &cpu_comp;
++       links[0].num_cpus        = 1;
++       links[0].platforms       = &plat_comp;
++       links[0].num_platforms   = 1;
++       links[0].codecs          = &mic_codec_comp;
++       links[0].num_codecs      = 1;
++       links[0].dai_fmt         = SND_SOC_DAIFMT_I2S |
++                                   SND_SOC_DAIFMT_NB_NF |
++                                   SND_SOC_DAIFMT_CBS_CFS;
++       links[0].ops             = &cxs_ops;
++       links[0].capture_only    = 1;
++
++       /* -------- Link 1: DAC playback -------- */
++       memset(&links[1], 0, sizeof(links[1]));
++       links[1].name            = "DAC-Playback";
++       links[1].stream_name     = "DAC Playback";
++       links[1].cpus            = &cpu_comp;
++       links[1].num_cpus        = 1;
++       links[1].platforms       = &plat_comp;
++       links[1].num_platforms   = 1;
++       links[1].codecs          = &dac_codec_comp;
++       links[1].num_codecs      = 1;
++       links[1].dai_fmt         = links[0].dai_fmt;
++       links[1].ops             = &cxs_ops;
++       links[1].playback_only   = 1;
++
++       memset(&cxs_card, 0, sizeof(cxs_card));
++       cxs_card.name      = "CXSMTSPK_Pi"; /* <= 32 chars */
++       cxs_card.owner     = THIS_MODULE;
++       cxs_card.dev       = dev;
++       cxs_card.dai_link  = links;
++       cxs_card.num_links = ARRAY_SIZE(links);
++
++       dev_dbg(dev, "registering card (cpu=%pOF, mic=%pOF, dac=%pOF)\n",
++               cpu_np, mic_np, dac_np);
++
++       ret = devm_snd_soc_register_card(dev, &cxs_card);
++       if (ret)
++               return dev_err_probe(dev, ret, "register_card failed");
++       dev_info(dev, "ASoC card registered\n");
++       return 0;
++}
++
++static const struct of_device_id cxsmtspk_of_match[] = {
++       { .compatible = "cnxt,cx2092x-pi-i2s" },
++       { /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, cxsmtspk_of_match);
++
++static struct platform_driver cxsmtspk_driver = {
++       .driver = {
++               .name           = "snd-soc-cxsmtspk-pi-i2s",
++               .of_match_table = cxsmtspk_of_match,
++       },
++       .probe = cxsmtspk_probe,
++};
++module_platform_driver(cxsmtspk_driver);
++
++MODULE_AUTHOR("Robert Zaage");
++MODULE_DESCRIPTION("ASoC machine driver for CX2092x mic + PCM512x DAC on Raspberry Pi");
++MODULE_LICENSE("GPL");
+diff --git a/sound/soc/codecs/Kconfig b/sound/soc/codecs/Kconfig
+index f50fa1da1..07484d8e0 100644
+--- a/sound/soc/codecs/Kconfig
++++ b/sound/soc/codecs/Kconfig
+@@ -99,6 +99,8 @@ config SND_SOC_ALL_CODECS
+        imply SND_SOC_CS53L30
+        imply SND_SOC_CX20442
+        imply SND_SOC_CX2072X
++       imply SND_SOC_CX2092X_I2C
++       imply SND_SOC_CX2092X_SPI
+        imply SND_SOC_DA7210
+        imply SND_SOC_DA7213
+        imply SND_SOC_DA7218
+@@ -964,6 +966,21 @@ config SND_SOC_CX2072X
+        help
+          Enable support for Conexant CX20721 and CX20723 codec chips.
+ 
++config SND_SOC_CX2092X
++       tristate
++
++config SND_SOC_CX2092X_I2C
++       tristate "Conexant CX20921/CX2094 CODEC (I2C)"
++       depends on I2C
++       select SND_SOC_CX2092X
++       select REGMAP_I2C
++
++config SND_SOC_CX2092X_SPI
++       tristate "Conexant CX20921/CX2094 CODEC (SPI)"
++       depends on SPI_MASTER
++       select SND_SOC_CX2092X
++       select REGMAP_SPI
++
+ config SND_SOC_JZ4740_CODEC
+        depends on MACH_INGENIC || COMPILE_TEST
+        depends on OF
+diff --git a/sound/soc/codecs/Makefile b/sound/soc/codecs/Makefile
+index f45b2102c..0fc12c365 100644
+--- a/sound/soc/codecs/Makefile
++++ b/sound/soc/codecs/Makefile
+@@ -105,6 +105,9 @@ snd-soc-cs47l92-objs := cs47l92.o
+ snd-soc-cs53l30-objs := cs53l30.o
+ snd-soc-cx20442-objs := cx20442.o
+ snd-soc-cx2072x-objs := cx2072x.o
++snd-soc-cx2092x-objs := cx2092x.o
++snd-soc-cx2092x-i2c-objs := cx2092x-i2c.o
++snd-soc-cx2092x-spi-objs := cx2092x-spi.o
+ snd-soc-da7210-objs := da7210.o
+ snd-soc-da7213-objs := da7213.o
+ snd-soc-da7218-objs := da7218.o
+@@ -495,6 +498,9 @@ obj-$(CONFIG_SND_SOC_CS47L92)       += snd-soc-cs47l92.o
+ obj-$(CONFIG_SND_SOC_CS53L30)  += snd-soc-cs53l30.o
+ obj-$(CONFIG_SND_SOC_CX20442)  += snd-soc-cx20442.o
+ obj-$(CONFIG_SND_SOC_CX2072X)  += snd-soc-cx2072x.o
++obj-$(CONFIG_SND_SOC_CX2092X)  += snd-soc-cx2092x.o
++obj-$(CONFIG_SND_SOC_CX2092X_I2C)      += snd-soc-cx2092x-i2c.o
++obj-$(CONFIG_SND_SOC_CX2092X_SPI)      += snd-soc-cx2092x-spi.o
+ obj-$(CONFIG_SND_SOC_DA7210)   += snd-soc-da7210.o
+ obj-$(CONFIG_SND_SOC_DA7213)   += snd-soc-da7213.o
+ obj-$(CONFIG_SND_SOC_DA7218)   += snd-soc-da7218.o
+diff --git a/sound/soc/codecs/cx2092x-i2c.c b/sound/soc/codecs/cx2092x-i2c.c
+new file mode 100644
+index 000000000..bac761b1f
+--- /dev/null
++++ b/sound/soc/codecs/cx2092x-i2c.c
+@@ -0,0 +1,64 @@
++/*
++ * cx2092x-i2c.c -- CX20921 and CX20924 I2C Audio driver
++ *
++ * Copyright:   (C) 2017 Conexant Systems, Inc.
++ *
++ * This is based on Alexander Sverdlin's CS4271 driver code.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ */
++
++#include <linux/module.h>
++#include <linux/i2c.h>
++#include <linux/regmap.h>
++#include <sound/soc.h>
++
++#include "cx2092x.h"
++
++static const struct of_device_id cx2092x_of_match[] = {
++       { .compatible = "cnxt,cx20921" },
++       { .compatible = "cnxt,cx20924" },
++       { }
++};
++MODULE_DEVICE_TABLE(of, cx2092x_of_match);
++
++/* single-arg probe expected by your kernel headers */
++static int cx2092x_i2c_probe(struct i2c_client *i2c)
++{
++       struct regmap *regmap;
++
++       regmap = devm_regmap_init_i2c(i2c, &cx2092x_regmap_config);
++       return cx2092x_dev_probe(&i2c->dev, regmap);
++}
++
++/* single-arg, void remove expected */
++static void cx2092x_i2c_remove(struct i2c_client *i2c)
++{
++       /* devm_ resources clean themselves up */
++}
++
++/* Still provide id table for non-DT systems; harmless otherwise */
++static const struct i2c_device_id cx2092x_i2c_id[] = {
++       { "cx20921", 0 },
++       { "cx20924", 0 },
++       { }
++};
++MODULE_DEVICE_TABLE(i2c, cx2092x_i2c_id);
++
++static struct i2c_driver cx2092x_i2c_driver = {
++       .driver = {
++               .name           = "cx2092x",
++               .of_match_table = cx2092x_of_match,
++       },
++       .probe    = cx2092x_i2c_probe,
++       .remove   = cx2092x_i2c_remove,
++       .id_table = cx2092x_i2c_id,
++};
++module_i2c_driver(cx2092x_i2c_driver);
++
++MODULE_DESCRIPTION("ASoC CX2092X I2C Driver");
++MODULE_AUTHOR("Simon Ho <simon.ho@conexant.com>");
++MODULE_LICENSE("GPL");
+diff --git a/sound/soc/codecs/cx2092x-spi.c b/sound/soc/codecs/cx2092x-spi.c
+new file mode 100644
+index 000000000..37239094f
+--- /dev/null
++++ b/sound/soc/codecs/cx2092x-spi.c
+@@ -0,0 +1,57 @@
++/*
++ * cx2092x-spi.c -- CX20921 and CX20924 SPI Audio driver
++ *
++ * Copyright:   (C) 2017 Conexant Systems, Inc.
++ *
++ * This is based on Alexander Sverdlin's CS4271 driver code.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ */
++
++#include <linux/module.h>
++#include <linux/spi/spi.h>
++#include <linux/regmap.h>
++#include <sound/soc.h>
++#include "cx2092x.h"
++
++static int cx2092x_spi_probe(struct spi_device *spi)
++{
++       struct regmap_config config;
++
++       config = cx2092x_regmap_config;
++       config.write_flag_mask = 0x81;
++
++       return cx2092x_dev_probe(&spi->dev,
++                       devm_regmap_init_spi(spi, &cx2092x_regmap_config));
++}
++
++static int cx2092x_spi_remove(struct spi_device *spi)
++{
++       snd_soc_unregister_codec(&spi->dev);
++       return 0;
++}
++
++static const struct spi_device_id cx2092x_spi_id[] = {
++       {"cx20921", 0},
++       {"cx20924", 0},
++       {}
++};
++
++static struct spi_driver cx2092x_spi_driver = {
++       .driver = {
++               .name = "cx2092x",
++               .of_match_table = of_match_ptr(cx2092x_dt_ids),
++       },
++       .id_table = cx2092x_spi_id,
++       .probe = cx2092x_spi_probe,
++       .remove = cx2092x_spi_remove,
++};
++
++module_spi_driver(cx2092x_spi_driver);
++
++MODULE_DESCRIPTION("ASoC CX2092X SPI Driver");
++MODULE_AUTHOR("Simon Ho <simon.ho@conexant.com>");
++MODULE_LICENSE("GPL");
+diff --git a/sound/soc/codecs/cx2092x.c b/sound/soc/codecs/cx2092x.c
+new file mode 100644
+index 000000000..08cb43e3f
+--- /dev/null
++++ b/sound/soc/codecs/cx2092x.c
+@@ -0,0 +1,358 @@
++/*
++ * cx2092x.c -- CX20921 and CX20924 ALSA SoC Audio driver
++ *
++ * Copyright:   (C) 2017 Conexant Systems, Inc.
++ *
++ * This is based on Alexander Sverdlin's CS4271 driver code.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ */
++
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <linux/delay.h>
++#include <linux/of.h>
++#include <linux/of_device.h>
++#include <linux/of_gpio.h>
++#include <linux/gpio/consumer.h>
++#include <linux/regmap.h>
++#include <sound/pcm.h>
++#include <sound/soc.h>
++
++#include "cx2092x.h"
++
++#define CX2092X_FORMATS (SNDRV_PCM_FMTBIT_S16_LE | \
++                        SNDRV_PCM_FMTBIT_S24_LE | \
++                        SNDRV_PCM_FMTBIT_S32_LE)
++
++#define CX2092X_CAPE_ID(a, b, c, d)  (((a) - 0x20) << 8 | \
++                                     ((b) - 0x20) << 14| \
++                                     ((c) - 0x20) << 20| \
++                                     ((d) - 0x20) << 26)
++
++#define CX2092X_ID2CH_A(id)  (((((unsigned int)(id)) >> 8) & 0x3f) + 0x20)
++#define CX2092X_ID2CH_B(id)  (((((unsigned int)(id)) >> 14) & 0x3f) + 0x20)
++#define CX2092X_ID2CH_C(id)  (((((unsigned int)(id)) >> 20) & 0x3f) + 0x20)
++#define CX2092X_ID2CH_D(id)  (((((unsigned int)(id)) >> 26) & 0x3f) + 0x20)
++
++#define CX2092X_CONTROL(xname, xinfo, xget, xput, xaccess) { \
++       .iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = (xname), \
++       .access = xaccess, .info = xinfo, .get = xget, .put = xput, \
++       }
++
++#define CX2092X_CMD_GET(item)   ((item) |  0x0100)
++#define CX2092X_CMD_SIZE 13
++
++struct cx2092x_cmd {
++       int     num_32b_words:16;
++       u32     command_id:15;
++       u32     reply:1;
++       u32     app_module_id;
++       u32     data[CX2092X_CMD_SIZE];
++};
++
++struct cx2092x_priv {
++       struct device *dev;
++       struct regmap *regmap;
++       struct gpio_desc *gpiod_reset;
++       struct cx2092x_cmd cmd;
++       int cmd_res;
++};
++
++static int cx2092x_sendcmd(struct snd_soc_component *component,
++                              struct cx2092x_cmd *cmd)
++{
++       struct cx2092x_priv *cx2092x = snd_soc_component_get_drvdata(component);
++       int ret = 0;
++       int num_32b_words = cmd->num_32b_words;
++       unsigned long time_out;
++       u32 *i2c_data = (u32 *)cmd;
++       int size = num_32b_words + 2;
++
++       cmd->num_32b_words = cmd->command_id & CX2092X_CMD_GET(0) ?
++                            CX2092X_CMD_SIZE : num_32b_words;
++
++       ret = regmap_bulk_write(cx2092x->regmap, 4, &i2c_data[1], size - 1);
++       if (ret < 0) {
++               dev_err(cx2092x->dev, "Failed to write command data\n");
++               goto out;
++       }
++
++       ret = regmap_bulk_write(cx2092x->regmap, 0, i2c_data, 1);
++       if (ret < 0) {
++               dev_err(cx2092x->dev, "Failed to write command\n");
++               goto out;
++       }
++
++       time_out = msecs_to_jiffies(2000) + jiffies;
++       do {
++               regmap_bulk_read(cx2092x->regmap, 0, &i2c_data[0], 1);
++               if (cmd->reply == 1)
++                       break;
++               mdelay(10);
++       } while (!time_after(jiffies, time_out));
++
++       if (cmd->reply == 1) {
++               if (cmd->num_32b_words > 0)
++                       regmap_bulk_read(cx2092x->regmap, 8, &i2c_data[2],
++                                        cmd->num_32b_words);
++               else if (cmd->num_32b_words < 0)
++                       dev_err(cx2092x->dev, "SendCmd failed, err = %d\n",
++                               cmd->num_32b_words);
++
++               ret = cmd->num_32b_words;
++       } else {
++               dev_err(cx2092x->dev, "SendCmd timeout\n");
++               ret = -EBUSY;
++       }
++
++out:
++       return ret;
++}
++
++static int cmd_info(struct snd_kcontrol *kcontrol,
++                       struct snd_ctl_elem_info *uinfo)
++{
++       uinfo->type = SNDRV_CTL_ELEM_TYPE_BYTES;
++       uinfo->count = sizeof(struct cx2092x_cmd);
++       return 0;
++}
++
++static int cmd_get(struct snd_kcontrol *kcontrol,
++                struct snd_ctl_elem_value *ucontrol)
++{
++       struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++       struct cx2092x_priv *cx2092x = snd_soc_component_get_drvdata(component);
++
++       memcpy(ucontrol->value.bytes.data, &cx2092x->cmd,
++              sizeof(cx2092x->cmd));
++       return 0;
++}
++
++static int cmd_put(struct snd_kcontrol *kcontrol,
++                struct snd_ctl_elem_value *ucontrol)
++{
++       struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++       struct cx2092x_priv *cx2092x = snd_soc_component_get_drvdata(component);
++
++       memcpy(&cx2092x->cmd, ucontrol->value.bytes.data,
++              sizeof(cx2092x->cmd));
++
++       cx2092x->cmd_res = cx2092x_sendcmd(component, &cx2092x->cmd);
++
++       if (cx2092x->cmd_res < 0)
++               dev_err(component->dev, "Failed to send cmd, ret = %d\n",
++                       cx2092x->cmd_res);
++
++       return cx2092x->cmd_res < 0 ? cx2092x->cmd_res : 0;
++}
++
++static int mode_info(struct snd_kcontrol *kcontrol,
++                    struct snd_ctl_elem_info *uinfo)
++{
++       uinfo->type = SNDRV_CTL_ELEM_TYPE_BYTES;
++       uinfo->count = 4;
++       return 0;
++}
++
++static int mode_get(struct snd_kcontrol *kcontrol,
++                   struct snd_ctl_elem_value *ucontrol)
++{
++       struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++       struct cx2092x_cmd cmd;
++       int ret;
++
++       cmd.command_id = 0x12f; /* CX2092X_CMD_GET(SOS_RESOURCE); */
++       cmd.reply = 0;
++       cmd.app_module_id = CX2092X_CAPE_ID('S', 'O', 'S', ' ');
++       cmd.num_32b_words = 1;
++       cmd.data[0] = CX2092X_CAPE_ID('C', 'T', 'R', 'L');
++
++       ret = cx2092x_sendcmd(component, &cmd);
++       if (ret <= 0) {
++               dev_err(component->dev, "Failed to get current mode, ret = %d\n",
++                       ret);
++               return ret ? ret : -EIO;
++       }
++
++       ucontrol->value.bytes.data[0] = CX2092X_ID2CH_A(cmd.data[0]);
++       ucontrol->value.bytes.data[1] = CX2092X_ID2CH_B(cmd.data[0]);
++       ucontrol->value.bytes.data[2] = CX2092X_ID2CH_C(cmd.data[0]);
++       ucontrol->value.bytes.data[3] = CX2092X_ID2CH_D(cmd.data[0]);
++
++       dev_dbg(component->dev, "Current mode = %c%c%c%c\n",
++               ucontrol->value.bytes.data[0],
++               ucontrol->value.bytes.data[1],
++               ucontrol->value.bytes.data[2],
++               ucontrol->value.bytes.data[3]);
++
++       return 0;
++}
++
++static int mode_put(struct snd_kcontrol *kcontrol,
++                   struct snd_ctl_elem_value *ucontrol)
++{
++       struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++       struct cx2092x_cmd cmd;
++       int ret;
++
++       cmd.command_id = 4;
++       cmd.reply = 0;
++       cmd.app_module_id = CX2092X_CAPE_ID('C', 'T', 'R', 'L');
++       cmd.num_32b_words = 1;
++       cmd.data[0] = CX2092X_CAPE_ID(ucontrol->value.bytes.data[0],
++                                     ucontrol->value.bytes.data[1],
++                                     ucontrol->value.bytes.data[2],
++                                     ucontrol->value.bytes.data[3]);
++
++       ret = cx2092x_sendcmd(component, &cmd);
++       if (ret < 0) {
++               dev_err(component->dev, "Failed to set mode, ret = %d\n", ret);
++               return ret;
++       }
++
++       dev_dbg(component->dev, "Set mode successfully, ret = %d\n", ret);
++       return 0;
++}
++
++static const struct snd_kcontrol_new cx2092x_snd_controls[] = {
++       CX2092X_CONTROL("SendCmd", cmd_info, cmd_get, cmd_put,
++                       SNDRV_CTL_ELEM_ACCESS_READ |
++                       SNDRV_CTL_ELEM_ACCESS_WRITE|
++                       SNDRV_CTL_ELEM_ACCESS_VOLATILE),
++       CX2092X_CONTROL("Mode", mode_info, mode_get, mode_put,
++                       SNDRV_CTL_ELEM_ACCESS_READ |
++                       SNDRV_CTL_ELEM_ACCESS_WRITE|
++                       SNDRV_CTL_ELEM_ACCESS_VOLATILE),
++};
++
++static const struct snd_soc_dapm_widget cx2092x_dapm_widgets[] = {
++       SND_SOC_DAPM_AIF_OUT("Mic AIF", "Capture", 0, SND_SOC_NOPM, 0, 0),
++       SND_SOC_DAPM_INPUT("MIC"),
++};
++
++static const struct snd_soc_dapm_route cx2092x_intercon[] = {
++       {"Mic AIF", NULL, "MIC"},
++};
++
++static struct snd_soc_dai_driver soc_codec_cx2092x_dai[] = {
++       {
++               .name = "cx2092x-aif",
++               .capture = {
++                       .stream_name = "Capture",
++                       .channels_min = 2,
++                       .channels_max = 2,
++                       .rates = SNDRV_PCM_RATE_48000,
++                       .formats = CX2092X_FORMATS,
++               },
++       },
++       {
++               .name = "cx2092x-dsp",
++               .capture = {
++                       .stream_name = "AEC Ref",
++                       .channels_min = 2,
++                       .channels_max = 2,
++                       .rates = SNDRV_PCM_RATE_48000,
++                       .formats = CX2092X_FORMATS,
++               },
++       },
++};
++
++static int cx2092x_reset(struct snd_soc_component *component)
++{
++       struct cx2092x_priv *cx2092x = snd_soc_component_get_drvdata(component);
++
++       if (cx2092x->gpiod_reset) {
++               gpiod_set_value_cansleep(cx2092x->gpiod_reset, 0);
++               mdelay(10);
++               gpiod_set_value_cansleep(cx2092x->gpiod_reset, 1);
++       }
++       return 0;
++}
++
++const struct of_device_id cx2092x_dt_ids[] = {
++       { .compatible = "cnxt,cx20921", },
++       { .compatible = "cnxt,cx20924", },
++       { }
++};
++MODULE_DEVICE_TABLE(of, cx2092x_dt_ids);
++
++static int cx2092x_component_probe(struct snd_soc_component *component)
++{
++       return cx2092x_reset(component);
++}
++
++static void cx2092x_component_remove(struct snd_soc_component *component)
++{
++       struct cx2092x_priv *cx2092x = snd_soc_component_get_drvdata(component);
++
++       if (cx2092x->gpiod_reset)
++               gpiod_set_value_cansleep(cx2092x->gpiod_reset, 0);
++}
++
++static const struct snd_soc_component_driver cx2092x_component_driver = {
++       .probe          = cx2092x_component_probe,
++       .remove         = cx2092x_component_remove,
++
++       .controls       = cx2092x_snd_controls,
++       .num_controls   = ARRAY_SIZE(cx2092x_snd_controls),
++       .dapm_widgets   = cx2092x_dapm_widgets,
++       .num_dapm_widgets = ARRAY_SIZE(cx2092x_dapm_widgets),
++       .dapm_routes    = cx2092x_intercon,
++       .num_dapm_routes = ARRAY_SIZE(cx2092x_intercon),
++};
++
++static bool cx2092x_volatile_register(struct device *dev, unsigned int reg)
++{
++       return true; /* all registers are volatile */
++}
++
++const struct regmap_config cx2092x_regmap_config = {
++       .reg_bits       = 16,
++       .val_bits       = 32,
++       .reg_stride     = 4,
++       .max_register   = CX2092X_REG_MAX,
++       .cache_type     = REGCACHE_NONE,
++       .volatile_reg   = cx2092x_volatile_register,
++       .val_format_endian = REGMAP_ENDIAN_NATIVE,
++};
++EXPORT_SYMBOL_GPL(cx2092x_regmap_config);
++
++int cx2092x_dev_probe(struct device *dev, struct regmap *regmap)
++{
++       struct cx2092x_priv *cx2092x;
++       int ret;
++
++       if (IS_ERR(regmap))
++               return PTR_ERR(regmap);
++
++       cx2092x = devm_kzalloc(dev, sizeof(*cx2092x), GFP_KERNEL);
++       if (!cx2092x)
++               return -ENOMEM;
++
++       cx2092x->gpiod_reset = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW);
++       if (IS_ERR(cx2092x->gpiod_reset))
++               return PTR_ERR(cx2092x->gpiod_reset);
++
++       dev_set_drvdata(dev, cx2092x);
++       cx2092x->regmap = regmap;
++       cx2092x->dev = dev;
++
++       ret = devm_snd_soc_register_component(dev, &cx2092x_component_driver,
++                                            soc_codec_cx2092x_dai,
++                                            ARRAY_SIZE(soc_codec_cx2092x_dai));
++       if (ret < 0)
++               dev_err(dev, "Failed to register codec: %d\n", ret);
++       else
++               dev_dbg(dev, "%s: Register codec.\n", __func__);
++
++       return ret;
++}
++EXPORT_SYMBOL_GPL(cx2092x_dev_probe);
++
++MODULE_DESCRIPTION("ASoC CX2092X ALSA SoC Driver");
++MODULE_AUTHOR("Simon Ho <simon.ho@conexant.com>");
++MODULE_LICENSE("GPL");
+diff --git a/sound/soc/codecs/cx2092x.h b/sound/soc/codecs/cx2092x.h
+new file mode 100644
+index 000000000..9577be847
+--- /dev/null
++++ b/sound/soc/codecs/cx2092x.h
+@@ -0,0 +1,26 @@
++/*
++ * cx2092x.h -- CX20921 and CX20924 Audio driver
++ *
++ * Copyright:   (C) 2017 Conexant Systems, Inc.
++ *
++ * This is based on Alexander Sverdlin's CS4271 driver code.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ */
++
++#ifndef __CX2092X_PRIV_H__
++#define __CX2092X_PRIV_H__
++
++#include <linux/regmap.h>
++
++extern const struct of_device_id cx2092x_dt_ids[];
++extern const struct regmap_config cx2092x_regmap_config;
++
++int cx2092x_dev_probe(struct device *dev, struct regmap *regmap);
++
++#define CX2092X_REG_MAX 0x2000
++
++#endif
