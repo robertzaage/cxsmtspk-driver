@@ -41,7 +41,7 @@ jobs:
         working-directory: ./linux
         run: |
           # Applies the patch located in your repo to the kernel tree
-          patch -p1 < ../robertzaage/cxsmtspk-driver/patch/rpi-cxsmartspk-driver.patch
+          patch -p1 < ../user-repo/patch/rpi-cxsmartspk-driver.patch
 
       - name: Configure Kernel
         working-directory: ./linux

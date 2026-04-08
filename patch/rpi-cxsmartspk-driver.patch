@@ -89,6 +89,7 @@ index 000000000..d9e4bf864
 +                               compatible = "cnxt,cx20921";
 +                               reg = <0x41>;
 +                               status = "okay";
++                               reset-gpios = <&gpio 22 0>;
 +                       };
 +
 +                       pcm512x: codec@4c {
